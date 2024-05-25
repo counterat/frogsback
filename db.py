@@ -1,0 +1,693 @@
+
+import decimal
+import random
+from datetime import datetime, timedelta
+from random import randint
+from sqlalchemy import  Column, Integer, String, Float, JSON, DateTime, Boolean, ForeignKey,ARRAY, DECIMAL, BigInteger, Sequence
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import declarative_base
+from sqlalchemy.future import select
+from sqlalchemy import update
+from sqlalchemy.orm import relationship
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.dialects.postgresql import array
+import requests
+
+import copy
+Base = declarative_base()
+DB_URL = 'postgresql+asyncpg://myuser:XGaaNySprD3@51.20.105.5/mydatabase'
+API_TOKEN = '7146421184:AAHx0S_cTcAd3JGSEn6yBhwKpMxNoLESR00'
+api_token = API_TOKEN
+import jwt
+import uuid
+tg_Bot_link = 'https://t.me/FrogTONBOT'
+class FrogTON(Base):
+    __abstract__ = True
+
+    def to_dict(self):
+        return {
+            c.name: (
+                getattr(self, c.name).__str__() if isinstance(getattr(self, c.name), datetime)
+                else str(getattr(self, c.name)) if isinstance(getattr(self, c.name), Decimal)
+                else getattr(self, c.name)
+            )
+            for c in self.__table__.columns if c.name != 'password'
+        }
+
+class Users_FrogTON( FrogTON):
+    __tablename__ = 'Users_FrogTON'
+    id = Column(BigInteger,Sequence('user_id_seq', start=9324234), primary_key=True)
+    password = Column(String)
+    sign = Column(String)
+    telegram_id = Column(BigInteger)
+    name = Column(String)
+    username = Column(String)
+    invited_by = Column(BigInteger)
+    invitation_code= Column(BigInteger)
+    invited_users = Column(ARRAY(Integer), default=[])
+    real_balance = Column(DECIMAL, default=0)
+    balances = Column(JSON, default=  {'green' : {}, 'yellow': {}, 'red':{} })
+    amount_of_money_withdrawed = Column(Float, default=0)
+    amount_of_money_topupped= Column(Float, default=0)
+    profit = Column(DECIMAL, default=0)
+    created_at  = Column(DateTime)
+
+
+class Purchases_FrogTON(FrogTON):
+    __tablename__='Purchases_FrogTON'
+    id = Column(Integer, primary_key=True)
+    was_purchased_by_user_id = Column(Integer)
+    good_id = Column(Integer)
+    profit_given = Column(Boolean, default=False)
+    created_at  = Column(DateTime)
+
+
+
+class  Payouts_FrogTON(FrogTON):
+    __tablename__ = 'Payouts_FrogTON'
+    id = Column(BigInteger, primary_key=True)
+    by_user_id = Column(BigInteger)
+    ton_amount = Column(DECIMAL)
+    order_id = Column(String)
+    is_paid = Column(Boolean, default=False)
+    created_at = Column(DateTime)
+    is_approved = Column(Boolean, default=None)
+    address = Column(String)
+
+
+class Goods_FrogTON(FrogTON):
+    __tablename__='Goods_FrogTON'
+    id = Column(Integer,primary_key=True)
+    name = Column(String)
+    price_in_ton = Column(Float)
+    income = Column(Float)
+
+
+class Payments_FrogTON(FrogTON):
+    __tablename__ = 'payments'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger)
+    amount = Column(Float)
+
+    uuid = Column(String)
+    description = Column(String)
+    order_id = Column(String)
+    status = Column(String)
+    created_at = Column(DateTime)
+
+    address = Column(String)
+
+    url = Column(String)
+
+
+
+
+engine = create_async_engine(DB_URL, echo=True)
+
+# Создание асинхронной фабрики сессий
+async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+async def add_to_invited_users(session, user_id, new_value):
+    print(f'{new_value}'*100)
+    user = await find_user_by_id(user_id)
+    message_text = f'По вашей ссылке перешел новый человек с айди {new_value}!'
+
+                        # Формируем URL для отправки сообщения
+    send_message_url = f'https://api.telegram.org/bot{api_token}/sendMessage'
+
+                        # Параметры запроса
+    params = {
+                            'chat_id': user.telegram_id,
+                            'text': message_text
+                        }
+
+                        # Отправляем POST-запрос к API Telegram для отправки сообщения
+    response = requests.post(send_message_url, json=params)
+    
+    print(f'{type(user.invited_users)}*90')
+    user.invited_users.append(new_value)
+    await session.execute(
+        update(Users_FrogTON)
+        .where(Users_FrogTON.id == user.id)
+        .values(invited_users=user.invited_users)
+    )
+async def remove_from_invited_users(session, user_id, value_to_remove):
+    user_who_innvited = await find_user_by_id(user_id)
+    user_who_innvited.invited_users.remove(value_to_remove)
+    await session.execute(
+        update(Users_FrogTON)
+        .where(Users_FrogTON.id == user_id)
+        .values(invited_users=user_who_innvited.invited_users)
+    )
+
+
+
+async def generate_unique_uuid(is_payout=False):
+    async with async_session() as session:
+
+        while True:
+            new_uuid = uuid.uuid4()
+
+            if is_payout:
+                # Асинхронно проверяем, существует ли уже такой UUID в базе данных для Payouts
+                stmt = select(Payouts_FrogTON).filter(Payouts_FrogTON.order_id == str(new_uuid))
+                result = await session.execute(stmt)
+                existing_record = result.scalar()
+                if not existing_record:
+                    # Если такого UUID еще нет в базе данных, возвращаем его
+                    return str(new_uuid)
+            else:
+                # Асинхронно проверяем, существует ли уже такой UUID в базе данных для Payments
+                stmt = select(Payments_FrogTON).filter(Payments_FrogTON.order_id == str(new_uuid))
+                result = await session.execute(stmt)
+                existing_record = result.scalar()
+                if not existing_record:
+                    # Если такого UUID еще нет в базе данных, возвращаем его
+                    return str(new_uuid)
+
+
+async def succesful_payment(uuid, status):
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                query = select(Payments_FrogTON).filter(Payments_FrogTON.uuid == uuid)
+                result = await  session.execute(query)
+                existing_record = result.scalar()
+                update_payment_query = (
+                    update(Payments_FrogTON)
+                    .where(Payments_FrogTON.uuid == uuid)
+                    .values(status = status)
+                )
+                await session.execute(update_payment_query)
+                if status =='paid' or status =='paid_over':
+                    query_for_user = select(Users_FrogTON).filter(Users_FrogTON.id == existing_record.user_id)
+                    result_for_user = await session.execute(query_for_user)
+                    user = result_for_user.scalar()
+
+            
+                    user.real_balance += Decimal(str( existing_record.amount))
+                    return user
+    except Exception as ex:
+        print(ex)
+
+
+async def add_payment(user_id, amount,  uuid, status  , order_id , address , url ):
+    try:
+        new_payment = Payments_FrogTON(
+            user_id=user_id,
+            amount=amount,
+            uuid=uuid,
+            order_id =order_id,
+            status =status,
+            created_at =datetime.now(),
+            address=address,
+            url=url
+
+        )
+        async with async_session() as session:
+            async with session.begin():
+                print(new_payment.to_dict(), 'LOXXXXXXXXXXXXXXX')
+                session.add(new_payment)
+        return new_payment
+
+
+    except Exception as ex:
+        print(ex, 'LXOXOXOXOXOXO')
+        return False
+
+async def add_purchase(user_id, good_id):
+    try:
+        new_purchase = Purchases_FrogTON(
+            was_purchased_by_user_id = user_id,
+            good_id = good_id,
+            created_at = datetime.now()
+
+
+        )
+        async with async_session() as session:
+            async with session.begin():
+                session.add(new_purchase)
+        return new_purchase
+    except Exception as ex:
+        print(ex)
+async def add_payout(user_id, amount, address):
+    try:
+        """__tablename__ = 'Payouts_FrogTON'
+        id = Column(Integer, primary_key=True)
+        by_user_id = Column(Integer)
+        ton_amount = Column(DECIMAL)
+        is_paid = Column(Boolean)
+        created_at = Column(DateTime)
+        is_approved = Column(Boolean)
+        address = Column(String)"""
+        user = await find_user_by_id(user_id)
+        if user.real_balance:
+            uniq_id = await generate_unique_uuid(True)
+            new_payout = Payouts_FrogTON(
+by_user_id = user_id, ton_amount=amount, order_id=uniq_id, address=address
+        )
+            async with async_session() as session:
+                async with session.begin():
+                    session.add(new_payout)
+                    update_user_query= (update(Users_FrogTON)
+                                        .where(Users_FrogTON.id == user_id)
+                                        .values(real_balance=user.real_balance-Decimal(str(amount)))
+
+                                        )
+                    await session.execute(update_user_query)
+            return new_payout, user
+    except Exception as ex:
+        print(ex)
+
+async def find_payout_by_id(payout_id):
+    try:
+        async with async_session() as session:
+            payout_query = select(Payouts_FrogTON).where(Payouts_FrogTON.id == payout_id)
+            result = await  session.execute(payout_query)
+            payout = result.scalar()
+            return payout
+    except Exception as ex:
+        print(ex)
+
+async def make_payout(payout_id):
+    try:
+        async with async_session() as session:
+            payout =await find_payout_by_id(payout_id)
+            update_payout_query = (
+                update(Payouts_FrogTON)
+                .where(Payouts_FrogTON.id == payout_id)
+                .values(is_approved=True, is_paid=True)
+            )
+            result = await  session.execute(update_payout_query)
+            await session.commit() 
+
+        return payout
+
+
+    except Exception as ex:
+        print(ex)
+
+async def decline_payout_handl(payout_id):
+    try:
+        async with async_session() as session:
+            payout_id = int(payout_id)
+            payout =await find_payout_by_id(payout_id)
+            update_payout_query = (
+                update(Payouts_FrogTON)
+                .where(Payouts_FrogTON.id == payout_id)
+                .values(is_approved=False)
+            )
+            user = await find_user_by_id(payout.by_user_id )
+            update_user_query = (
+                update(Users_FrogTON)
+                .where(Users_FrogTON.id == user.id)
+                .values(real_balance=user.real_balance +  Decimal(str(payout.ton_amount)))
+            )
+            await  session.execute(update_user_query)
+            await session.commit() 
+            print(user.to_dict())
+            result = await  session.execute(update_payout_query)
+            await session.commit() 
+
+
+
+    except Exception as ex:
+        print(ex)
+
+async  def find_user_by_invit_code(invit_code):
+    try:
+        async with async_session() as session:
+            query = select(Users_FrogTON).where(Users_FrogTON.invitation_code == int(invit_code))
+            result = await session.execute(query)
+            return result.scalar()
+    except Exception as ex:
+        print(ex)
+
+async def add_user(telegram_id, name, username, created_at, invit_code):
+    try:
+        password = str(uuid.uuid4())
+        user = await find_user_by_invit_code(invit_code)
+        if not user:
+            new_user = Users_FrogTON(
+                telegram_id=telegram_id,
+                name=name,
+                username=username,
+                created_at=created_at,
+                password=password,
+                sign=jwt.encode({'id': telegram_id, "password": password}, 'secret_key'),
+                invitation_code=random.randint(100, 2147483647),
+
+            )
+        else:
+            new_user = Users_FrogTON(
+            telegram_id=telegram_id,
+            name=name,
+            username=username,
+            created_at=created_at,
+            password=password,
+            sign=jwt.encode({'id':telegram_id, "password":password}, 'secret_key'),
+            invitation_code = random.randint(100, 2147483647),
+            invited_by = user.id
+        )
+            
+
+        # Создание асинхронной сессии и добавление пользователя в базу данных
+        async with async_session() as session:
+            async with session.begin():
+                session.add(new_user)
+            if user:
+                print([user.id, new_user.id]*66)
+                await add_to_invited_users(session, user.id, new_user.id)
+                await session.commit()
+        print(new_user.to_dict(), 'sosi')
+
+        return new_user
+    except Exception as ex:
+        print(ex, 'EEEEEEEE')
+
+async def get_users():
+    try:
+        async with async_session() as session:
+            result = await session.execute(select(Users_FrogTON))
+            users = result.scalars().all()
+            for user in users:
+                print(user.name, user.username)
+
+    except Exception as ex:
+        print(ex)
+
+async def find_good_by_id(id):
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                query = select(Goods_FrogTON).where(Goods_FrogTON.id==id)
+                result = await  session.execute(query)
+                good = result.scalar()
+                return good
+    except Exception as ex:
+        print(ex)
+from decimal import Decimal, getcontext
+getcontext().prec = 10
+
+
+async def buy_frog_by_user(user_id, frog_id):
+    
+        async with async_session() as session:
+            async with session.begin():
+                query_for_good = select(Goods_FrogTON).where(Goods_FrogTON.id == frog_id)
+             
+                result = await  session.execute(query_for_good)
+                good = result.scalar()
+                query_for_user = select(Users_FrogTON).where(Users_FrogTON.id == user_id)
+               
+                result = await session.execute(query_for_user)
+                user = result.scalar()
+                
+                print(user.balances)
+                if user.balances[good.name] !={}:
+                    return 'you already have this frog'
+                if (user.real_balance >=Decimal(str( good.price_in_ton))):
+
+                    purchase = await add_purchase(user.id, good.id)
+                    print(purchase)
+                    if not purchase:
+                        return 'error'
+                    user.balances[good.name] = purchase.to_dict()
+                    float_to_decimal = Decimal(str(good.price_in_ton))
+                    update_user_query = (
+                        update(Users_FrogTON)
+                        .where(Users_FrogTON.id == user.id)
+                        .values(real_balance=user.real_balance - float_to_decimal, balances = user.balances)
+                    )
+                    await session.execute(update_user_query)
+                    if user.invited_by:
+                        user_who_invited = await  find_user_by_id(user.invited_by)
+                        update_user_who_invited_query = (
+                            update(Users_FrogTON)
+                            .where(Users_FrogTON.id == user_who_invited.id)
+                            .values(real_balance=user_who_invited.real_balance+Decimal('0.01')*Decimal(str( good.price_in_ton)))
+                        )
+                        message_text = f'Вам начислено {Decimal("0.01")*Decimal(str( good.price_in_ton))} за рефа с айди {user.id}!'
+
+                        # Формируем URL для отправки сообщения
+                        send_message_url = f'https://api.telegram.org/bot{api_token}/sendMessage'
+
+                        # Параметры запроса
+                        params = {
+                            'chat_id': user_who_invited.telegram_id,
+                            'text': message_text
+                        }
+
+                        # Отправляем POST-запрос к API Telegram для отправки сообщения
+                        response = requests.post(send_message_url, json=params)
+                        await session.execute(update_user_who_invited_query)
+                       
+
+                    query_for_user = select(Users_FrogTON).where(Users_FrogTON.id == user_id)
+                    result = await session.execute(query_for_user)
+                    user = result.scalar()
+                    print(user)
+                    return user
+                return 'not enough money'
+    
+     
+async def find_user_by_id(id):
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                query = select(Users_FrogTON).where(Users_FrogTON.id == id)
+                result = await session.execute(query)
+                users = result.scalars().all()
+                return users[0]
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return []
+async def find_user_by_telegram_id(telegram_id):
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                query = select(Users_FrogTON).where(Users_FrogTON.telegram_id == telegram_id)
+                result = await session.execute(query)
+                users = result.scalars().all()
+                print(users[0].to_dict())
+                return users[0]
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return []
+
+async def add_frogs():
+    try:
+        green_frog = Goods_FrogTON(
+            name='green',
+            price_in_ton=0.2,
+            income = 0.35
+
+        )
+        yellow_frog = Goods_FrogTON(
+            name='yellow',
+            price_in_ton= 1,
+            income=1.5
+        )
+        red_frog = Goods_FrogTON(
+            name='red',
+            price_in_ton =3,
+            income=4.75
+        )
+        async with async_session() as session:
+            async with session.begin():
+                session.add_all([green_frog, yellow_frog, red_frog])
+
+    except Exception as ex:
+        print(ex)
+
+
+async def drop_all_tables():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+async def create_tables():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+import asyncio
+async def prepare_all():
+    await drop_all_tables()
+    await create_tables()
+    await add_frogs()
+
+"asyncio.run(add_frogs())"
+
+
+
+""" ss Worker(Base):
+    __tablename__ = 'workers'
+    service_id = Column(Integer, default=randint(100000000, 999999999))
+    telegram_id = Column(Integer, primary_key=True)
+    name = Column(String)
+    profit = Column(Float, default=0.0)
+    profit_quantity = Column(Integer, default=0)
+    balance = Column(Float, default=0.0)
+    warnings = Column(Integer, default=0)
+    payment_method = Column(String, default='Crypto USDT')
+    created_at = Column(DateTime, default=datetime.utcnow)
+    mammonts = Column(String, default='')
+    invited_worker = Column(String, default='')
+    token = Column(String)
+    token_for_escort_bot = Column(String)
+    additional_models = Column(JSON)
+    mammonts_from_escort = Column(String, default='')
+    children = relationship("Mammoth", back_populates="parent")
+
+class MammothFromEscort(Base):
+    __tablename__ = 'mammonths_from_escort'
+    first_name = Column(String)
+    telegram_id = Column(Integer, primary_key=True)
+    service_id = Column(Integer)
+    balance = Column(Float, default=0.0)
+    was_using_support = Column(Boolean, default=False)
+
+class Mammoth(Base):
+    __tablename__ = 'mammonths'
+    first_name = Column(String)
+    telegram_id = Column(Integer, primary_key=True)
+    service_id = Column(Integer)
+    balance = Column(Float, default=0.0)
+    on_output = Column(Float, default=0.0)
+    cryptoportfolio = Column(JSON, default={'btc': 0.0, 'eth': 0.0,'ltc':0.0})
+    succesful_deals = Column(Integer, default=0)
+    deals = Column(Integer, default=0)
+    luck = Column(Integer, default=50)
+    min_input_output_amount_value = Column(Integer, default=2000)
+    created_at = Column(DateTime, default=datetime.now())
+    belongs_to_worker = Column(Integer, ForeignKey('workers.telegram_id'))
+    profit = Column(Float, default=0.0)
+    was_using_support = Column(Boolean, default=False)
+
+    parent = relationship("Worker", back_populates="children")
+class Futures(Base):
+    __tablename__ = 'futures'
+    id = Column(Integer, primary_key=True)
+    message_id = Column(Integer)
+    chat_id = Column(Integer)
+    user_id = Column(Integer)
+    cryptosymbol = Column(String)
+    pool = Column(Float)
+    is_increase = Column(Boolean)
+    start_price = Column(Float)
+
+class Withdraws(Base):
+    __tablename__ = 'withdraws'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)
+    card = Column(Integer)
+    amount = Column(Float)
+
+class Payouts(Base):
+    __tablename__ = 'payouts'
+    order_id = Column(Integer, primary_key=True)
+    worker_id = Column(Integer)
+    currency = Column(String, default='RUB')
+    to_currency = Column(String, default='USDT')
+    amount = Column(Float)
+    address = Column(String)
+    course_source = Column(String, default='Binance')
+    is_subtract = Column(Boolean, default=False)
+    network = Column(String, default='TRON')
+
+class MammonthTopUpWithCrypto(Base):
+    __tablename__ = 'mammonth_top_up_with_crypto'
+    order_id = Column(String)
+    mammonth_id = Column(Integer)
+    amount = Column(Float)
+    created_at = Column(DateTime, default=datetime.now())
+    cryptomus_link = Column(String)
+    uuid = Column(String, primary_key=True)
+
+
+class Sluts(Base):
+    __tablename__ = 'sluts'
+    slut_id = Column(Integer, primary_key=True)
+    name = Column(String)
+    age = Column(Integer)
+    prices = Column(JSON)
+    description = Column(String)
+    services = Column(String)
+
+class ReviewsAboutSluts(Base):
+    __tablename__ = 'reviews_about_sluts'
+    review_id = Column(Integer, primary_key=True)
+    slut_id = Column(Integer)
+    name = Column(String)
+    date = Column(DateTime)
+    text = Column(String) """
+# slut1 = Sluts(name = 'Риана', age = 24, description = '''
+# Королева минета, готова ублажить тебя до состояния умопомрачения, а также заставить тебя подчиняться. Люблю пожёстче))
+# ''', services = '''МБР, окончание в рот, легкая доминация, садо-мазо''', prices={'Час':4600, "2 часа":8500, 'Ночь':21100 })
+#
+# slut2 = Sluts(name = 'Наташенька', age = 26, description = '''
+# Жаркая малышка с очень аппетитными формами и сладкими дырочками. Показываю всю роскошсть своего тела и с удовольствием готова доставить тебе незабываемые эмоции🔥
+# ''', services = '''Кунилингус, сексуальные костюмы, стриптиз''', prices={'Час':5300, "2 часа":9200, 'Ночь':21000 })
+#
+# slut3 = Sluts(name = 'Кристина', age = 22, description = '''
+# Меня можно охарактеризовать несколькими словами: я похотливая девчонка и согласна на любые эксперименты для достижения обоюдного оргазма в постели))
+# ''', services = '''МБР, анал, секс-игрушки, ролевые игры''', prices={'Час':4500, "2 часа":8000, 'Ночь':12600 })
+#
+# slut4 = Sluts(name = 'Настя', age = 24, description = '''
+# Эта девочка обладает упругой попкой и заводным характером, то, что нужно попробовать каждому!
+# ''', services = '''МБР, анал, фингеринг''', prices={'Час':6500, "2 часа":12000, 'Ночь':22300 })
+#
+# slut5 = Sluts(name = 'Вика', age = 24, description = '''
+# Фингеринг, бондаж, окончание на грудь''', services = '''Фингеринг, бондаж, окончание на грудь''', prices={'Час':4500, "2 часа":8600, 'Ночь':18000 })
+#
+# slut6 = Sluts(name = 'Наташа', age = 27, description = '''
+# Горячая и сексуальная девочка, способная удовлетворить каждого мужчину своими услугами)''', services = '''Анал, секс-игрушки, МБР, окончание в рот,
+# окончание на грудь''', prices={'Час':8500, "2 часа":16100, 'Ночь':56400 })
+#
+# slut7 = Sluts(name = 'Валерия', age = 24, description = '''
+# Широко известная в узких кругах Валерия сводит с ума наших клиентов уже на протяжении 2 лет. Пора перестать откладывать на потом, возьми все что хочешь прямо сейчас!
+# ''', prices={'Час':12800, "2 часа":24200, 'Ночь':78600 }, services='''Анал, МБР, окончание в рот, окочание на грудь, фингеринг, кунилингус, секс-игрушки''')
+#
+# slut8 = Sluts(name = 'Юля', age = 23, description = '''
+# Лучший вариант для тех, кто любит большую грудь и покорный характер. Юлечька сочетает в себе эти два преимущества, как никто другой😍
+# ''', prices={'Час':10900, "2 часа":19500, 'Ночь':51500 }, services='''МБР, окончание на грудь, легкое подчинение''')
+#
+#
+# session.add(slut1)
+# session.add(slut2)
+# session.add(slut3)
+# session.add(slut4)
+# session.add(slut5)
+# session.add(slut6)
+# session.add(slut7)
+# session.add(slut8)
+# session.commit()
+
+
+
+# def return_datetime(date_str):
+#     date_format = "%d.%m.%Y"
+#     return datetime.strptime(date_str, date_format)
+#
+# list_for_reviews = []
+# def save_in_db_review(review, slut_id=8):
+#
+#     processed_list = review.split('\n')[2:]
+#     name = processed_list[0].split(' ')[0]
+#     date = processed_list[0].split(' ')[1]
+#     text = processed_list[1]
+#     print(name,date,text)
+#     slut_review = ReviewsAboutSluts(slut_id=slut_id, name=name, text=text,date=return_datetime(date))
+#     session.add(slut_review)
+#     session.commit()
+#
+# # for i in range(1,13):
+# #     exec(f'''
+# # session.add(review{i})
+# # session.commit()
+# #     ''')
+# save_in_db_review(
+#
+# '''💕Отзывы о модели:
+#
+# Алексей 09.06.2019
+# Сама безумно возбуждается и кайфует от процесса.
+# ''')
