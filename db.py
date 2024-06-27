@@ -514,7 +514,7 @@ async def prepare_all():
     await create_tables()
     await add_frogs()
 
-asyncio.run(create_tables())
+asyncio.run(add_frogs())
 
 
 
