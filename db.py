@@ -16,7 +16,7 @@ import requests
 
 import copy
 Base = declarative_base()
-DB_URL = 'postgresql+asyncpg://myuser:XGaaNySprD3@51.20.105.5/mydatabase'
+DB_URL = 'postgresql+asyncpg://myuser:XGaaNySprD3@13.60.70.81/mydatabase'
 API_TOKEN = '7146421184:AAHx0S_cTcAd3JGSEn6yBhwKpMxNoLESR00'
 api_token = API_TOKEN
 import jwt
@@ -514,7 +514,7 @@ async def prepare_all():
     await create_tables()
     await add_frogs()
 
-"asyncio.run(add_frogs())"
+asyncio.run(create_tables())
 
 
 
