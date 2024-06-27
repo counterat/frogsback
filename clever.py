@@ -13,7 +13,7 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.dispatcher import FSMContext
 from aiogram.types import ParseMode, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, InputFile
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiobotocore.session import get_session
+
 from db import *
 
 import requests
